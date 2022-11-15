@@ -1172,9 +1172,6 @@ void FS_Rescan( void )
 	const char *str;
 	const int extrasFlags = FS_NOWRITE_PATH | FS_CUSTOM_PATH;
 
-	char *home = getenv("HOME");
-	int   homeLen;
-
 	size_t exelen;
 	char *exe;
 	char *filename;
@@ -1210,16 +1207,11 @@ void FS_Rescan( void )
 	pathLen = filename - exe;
 	path = (char *) malloc(pathLen + 1);
 	memcpy(path, exe, pathLen);
-	// strcat( path, "valve" );
+
+	FS_AddArchive_Fullpath( va( "%svalve/extras.pk3", path ), NULL, extrasFlags );
+
 	path[pathLen - 1] = '\0';
 
-	homeLen = strlen(home);
-	// strcat( home, "valve" );	
-	home[homeLen - 1] = '\0';
-
-	// Mac stuff
-	// strcat( home, "/.xash3d/" );	
-	FS_AddGameHierarchy( home, FS_GAMEDIR_PATH );
 	FS_AddGameHierarchy( path, FS_GAMEDIR_PATH );
 
 	if( Q_stricmp( GI->basedir, GI->gamefolder ))
@@ -1426,14 +1418,6 @@ qboolean FS_InitStdio( qboolean caseinsensitive, const char *rootdir, const char
 	qboolean		hasGameDir = false;
 	int		i;
 
-	char *home = getenv("HOME");
-
-	size_t exelen;
-	char *exe;
-	char *filename;
-	int   pathLen;
-	char *path;
-
 	FS_InitMemory();
 #if !XASH_WIN32
 	fs_caseinsensitive = caseinsensitive;
@@ -1495,21 +1479,6 @@ qboolean FS_InitStdio( qboolean caseinsensitive, const char *rootdir, const char
 
 	// build list of game directories here
 	FS_AddGameDirectory( "./", FS_STATIC_PATH );
-
-	exelen = wai_getExecutablePath( NULL, 0, NULL );
-	exe = (char*)malloc( exelen + 1 );
-	wai_getExecutablePath( exe, exelen, NULL );
-	exe[exelen] = 0;
-	filename =  strrchr(exe, '/') + 1;
-	pathLen = filename - exe;
-	path = (char *) malloc(pathLen + 1);
-	memcpy(path, exe, pathLen);
-	path[pathLen] = '\0';
-
-	// Mac stuff
-	strcat( home, "/.xash3d/" );	
-	FS_AddGameDirectory( home, FS_STATIC_PATH );
-	FS_AddGameDirectory( path, FS_STATIC_PATH );
 
 	for( i = 0; i < dirs.numstrings; i++ )
 	{
