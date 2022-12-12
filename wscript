@@ -123,10 +123,7 @@ def options(opt):
 
 		opt.add_subproject(i.name)
 
-	opt.load('xshlib xcompile compiler_cxx compiler_c sdl2 clang_compilation_database strip_on_install waf_unit_test msdev msvs')
-	if sys.platform == 'win32':
-		opt.load('msvc')
-	opt.load('reconfigure')
+	opt.load('xshlib xcompile compiler_cxx compiler_c sdl2 clang_compilation_database strip_on_install waf_unit_test msdev msvs msvc reconfigure')
 
 def configure(conf):
 	conf.load('fwgslib reconfigure compiler_optimizations')
@@ -281,6 +278,9 @@ def configure(conf):
 
 		if not conf.env.LIB_M: # HACK: already added in xcompile!
 			conf.check_cc(lib='m')
+
+		if conf.env.DEST_OS == 'android':
+			conf.check_cc(lib='log')
 	else:
 		# Common Win32 libraries
 		# Don't check them more than once, to save time

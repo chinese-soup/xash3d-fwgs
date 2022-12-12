@@ -2928,7 +2928,13 @@ void CL_PlayerDecal( int playernum, int customIndex, int entityIndex, float *pos
 		{
 			if( !pCust->nUserData1 )
 			{
+				int sprayTextureIndex;
 				const char *decalname = va( "player%dlogo%d", playernum, customIndex );
+				sprayTextureIndex = ref.dllFuncs.GL_FindTexture( decalname );
+				if( sprayTextureIndex != 0 )
+				{
+					ref.dllFuncs.GL_FreeTexture( sprayTextureIndex );
+				}
 				pCust->nUserData1 = GL_LoadTextureInternal( decalname, pCust->pInfo, TF_DECAL );
 			}
 			textureIndex = pCust->nUserData1;

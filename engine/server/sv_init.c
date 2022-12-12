@@ -628,9 +628,6 @@ void SV_ActivateServer( int runPhysics )
 
 		if( COM_CheckString( cycle ))
 			Cbuf_AddText( va( "exec %s\n", cycle ));
-
-		if( public_server->value )
-			Master_Add( );
 	}
 }
 
@@ -876,6 +873,9 @@ qboolean SV_SpawnServer( const char *mapname, const char *startspot, qboolean ba
 
 	if( !SV_InitGame( ))
 		return false;
+
+	// unlock sv_cheats in local game
+	ClearBits( sv_cheats.flags, FCVAR_READ_ONLY );
 
 	svs.initialized = true;
 	Log_Open();

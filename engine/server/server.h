@@ -377,6 +377,7 @@ typedef struct
 
 	double		last_heartbeat;
 	challenge_t	challenges[MAX_CHALLENGES];	// to prevent invalid IPs from connecting
+	uint		heartbeat_challenge;
 } server_static_t;
 
 //=============================================================================
@@ -394,7 +395,7 @@ extern convar_t		sv_unlag;
 extern convar_t		sv_maxunlag;
 extern convar_t		sv_unlagpush;
 extern convar_t		sv_unlagsamples;
-extern convar_t		rcon_password;
+extern convar_t		rcon_enable;
 extern convar_t		sv_instancedbaseline;
 extern convar_t		sv_background_freeze;
 extern convar_t		sv_minupdaterate;
@@ -435,10 +436,13 @@ extern convar_t		sv_consistency;
 extern convar_t		sv_password;
 extern convar_t		sv_uploadmax;
 extern convar_t		sv_trace_messages;
+extern convar_t		sv_enttools_enable;
+extern convar_t		sv_enttools_maxfire;
 extern convar_t		deathmatch;
 extern convar_t		hostname;
 extern convar_t		skill;
 extern convar_t		coop;
+extern convar_t		sv_cheats;
 
 extern	convar_t		*sv_pausable;		// allows pause in multiplayer
 extern	convar_t		*sv_check_errors;
@@ -472,13 +476,9 @@ void SV_SendResource( resource_t *pResource, sizebuf_t *msg );
 void SV_SendResourceList( sv_client_t *cl );
 void SV_AddToMaster( netadr_t from, sizebuf_t *msg );
 qboolean SV_ProcessUserAgent( netadr_t from, const char *useragent );
-int SV_GetConnectedClientsCount( int *bots );
 void Host_SetServerState( int state );
 qboolean SV_IsSimulating( void );
 void SV_FreeClients( void );
-void Master_Add( void );
-void Master_Heartbeat( void );
-void Master_Packet( void );
 
 //
 // sv_init.c
@@ -549,6 +549,7 @@ void SV_InitClientMove( void );
 void SV_UpdateServerInfo( void );
 void SV_EndRedirect( void );
 void SV_RejectConnection( netadr_t from, const char *fmt, ... ) _format( 2 );
+void SV_GetPlayerCount( int *clients, int *bots );
 
 //
 // sv_cmds.c
@@ -642,8 +643,11 @@ void SV_RestartAmbientSounds( void );
 void SV_RestartDecals( void );
 void SV_RestartStaticEnts( void );
 int pfnGetCurrentPlayer( void );
+int pfnDropToFloor( edict_t* e );
 edict_t *SV_EdictNum( int n );
 char *SV_Localinfo( void );
+void SV_SetModel( edict_t *ent, const char *name );
+
 //
 // sv_log.c
 //

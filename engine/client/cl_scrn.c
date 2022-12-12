@@ -780,7 +780,6 @@ SCR_VidInit
 */
 void SCR_VidInit( void )
 {
-	string libpath;
 	if( !ref.initialized ) // don't call VidInit too soon
 		return;
 
@@ -795,8 +794,11 @@ void SCR_VidInit( void )
 		gameui.globals->scrHeight = refState.height;
 	}
 
-	COM_GetCommonLibraryPath( LIBRARY_CLIENT, libpath, sizeof( libpath ));
-	VGui_Startup( libpath, refState.width, refState.height );
+	// notify vgui about screen size change
+	if( clgame.hInstance )
+	{
+		VGui_Startup( refState.width, refState.height );
+	}
 
 	CL_ClearSpriteTextures(); // now all hud sprites are invalid
 
@@ -827,7 +829,7 @@ void SCR_Init( void )
 	v_dark = Cvar_Get( "v_dark", "0", 0, "starts level from dark screen" );
 	scr_viewsize = Cvar_Get( "viewsize", "120", FCVAR_ARCHIVE, "screen size" );
 	net_speeds = Cvar_Get( "net_speeds", "0", FCVAR_ARCHIVE, "show network packets" );
-	cl_showfps = Cvar_Get( "cl_showfps", "1", FCVAR_ARCHIVE, "show client fps" );
+	cl_showfps = Cvar_Get( "cl_showfps", "0", FCVAR_ARCHIVE, "show client fps" );
 	cl_showpos = Cvar_Get( "cl_showpos", "0", FCVAR_ARCHIVE, "show local player position and velocity" );
 
 	// register our commands

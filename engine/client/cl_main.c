@@ -27,7 +27,7 @@ GNU General Public License for more details.
 #define MAX_CMD_BUFFER		8000
 #define CONNECTION_PROBLEM_TIME	15.0	// 15 seconds
 #define CL_CONNECTION_RETRIES		10
-#define CL_TEST_RETRIES_NORESPONCE	2
+#define CL_TEST_RETRIES_NORESPONCE	3
 #define CL_TEST_RETRIES		5
 
 CVAR_DEFINE_AUTO( mp_decals, "300", FCVAR_ARCHIVE, "decals limit in multiplayer" );
@@ -38,8 +38,8 @@ CVAR_DEFINE_AUTO( cl_allow_upload, "1", FCVAR_ARCHIVE, "allow to uploading resou
 CVAR_DEFINE_AUTO( cl_download_ingame, "1", FCVAR_ARCHIVE, "allow to downloading resources while client is active" );
 CVAR_DEFINE_AUTO( cl_logofile, "lambda", FCVAR_ARCHIVE, "player logo name" );
 CVAR_DEFINE_AUTO( cl_logocolor, "orange", FCVAR_ARCHIVE, "player logo color" );
+CVAR_DEFINE_AUTO( cl_logoext, "bmp", FCVAR_ARCHIVE, "temporary cvar to tell engine which logo must be packed" );
 CVAR_DEFINE_AUTO( cl_test_bandwidth, "1", FCVAR_ARCHIVE, "test network bandwith before connection" );
-convar_t	*rcon_client_password;
 convar_t	*rcon_address;
 convar_t	*cl_timeout;
 convar_t	*cl_nopred;
@@ -739,12 +739,18 @@ void CL_WritePacket( void )
 	MSG_Init( &buf, "ClientData", data, sizeof( data ));
 
 	// Determine number of backup commands to send along
-	numbackup = bound( 0, cl_cmdbackup->value, MAX_BACKUP_COMMANDS );
+	numbackup = bound( 0, cl_cmdbackup->value, cls.legacymode ? MAX_LEGACY_BACKUP_CMDS : MAX_BACKUP_COMMANDS );
 	if( cls.state == ca_connected ) numbackup = 0;
 
 	// clamp cmdrate
-	if( cl_cmdrate->value < 0.0f ) Cvar_SetValue( "cl_cmdrate", 0.0f );
-	else if( cl_cmdrate->value > 100.0f ) Cvar_SetValue( "cl_cmdrate", 100.0f );
+	if( cl_cmdrate->value < 10.0f )
+	{
+		Cvar_SetValue( "cl_cmdrate", 10.0f );
+	}
+	else if( cl_cmdrate->value > 100.0f )
+	{
+		Cvar_SetValue( "cl_cmdrate", 100.0f );
+	}
 
 	// Check to see if we can actually send this command
 
@@ -813,12 +819,13 @@ void CL_WritePacket( void )
 		newcmds = ( cls.netchan.outgoing_sequence - cls.lastoutgoingcommand );
 
 		// put an upper/lower bound on this
-		newcmds = bound( 0, newcmds, cls.legacymode?MAX_LEGACY_TOTAL_CMDS:MAX_TOTAL_CMDS );
+		newcmds = bound( 0, newcmds, cls.legacymode ? MAX_LEGACY_TOTAL_CMDS: MAX_TOTAL_CMDS );
 		if( cls.state == ca_connected ) newcmds = 0;
 
 		MSG_WriteByte( &buf, newcmds );
 
 		numcmds = newcmds + numbackup;
+
 		from = -1;
 
 		for( i = numcmds - 1; i >= 0; i-- )
@@ -1044,6 +1051,9 @@ void CL_SendConnectPacket( void )
 		input_devices = IN_CollectInputDevices();
 		IN_LockInputDevices( true );
 
+		Cvar_SetCheatState();
+		Cvar_FullSet( "sv_cheats", "0", FCVAR_READ_ONLY | FCVAR_SERVER );
+
 		Info_SetValueForKey( protinfo, "d", va( "%d", input_devices ), sizeof( protinfo ) );
 		Info_SetValueForKey( protinfo, "v", XASH_VERSION, sizeof( protinfo ) );
 		Info_SetValueForKey( protinfo, "b", va( "%d", Q_buildnum() ), sizeof( protinfo ) );
@@ -1098,8 +1108,9 @@ Resend a connect message if the last one has timed out
 */
 void CL_CheckForResend( void )
 {
-	netadr_t	adr;
+	netadr_t adr;
 	int res;
+	qboolean bandwidthTest;
 
 	if( cls.internetservers_wait )
 		CL_InternetServers_f();
@@ -1164,14 +1175,18 @@ void CL_CheckForResend( void )
 		return;
 	}
 
+	bandwidthTest = !cls.legacymode && cl_test_bandwidth.value;
 	cls.serveradr = adr;
-	cls.max_fragment_size = Q_max( FRAGMENT_MAX_SIZE, cls.max_fragment_size >> Q_min( 1, cls.connect_retry ));
+	cls.max_fragment_size = Q_min( FRAGMENT_MAX_SIZE, cls.max_fragment_size / (cls.connect_retry + 1));
 	cls.connect_time = host.realtime; // for retransmit requests
 	cls.connect_retry++;
 
+	if( bandwidthTest )
+		Con_Printf( "Connecting to %s... [retry #%i, max fragment size %i]\n", cls.servername, cls.connect_retry, cls.max_fragment_size );
+	else
 	Con_Printf( "Connecting to %s... [retry #%i]\n", cls.servername, cls.connect_retry );
 
-	if( !cls.legacymode && cl_test_bandwidth.value )
+	if( bandwidthTest )
 		Netchan_OutOfBandPrint( NS_CLIENT, adr, "bandwidth %i %i\n", PROTOCOL_VERSION, cls.max_fragment_size );
 	else
 		Netchan_OutOfBandPrint( NS_CLIENT, adr, "getchallenge\n" );
@@ -1196,7 +1211,7 @@ resource_t *CL_AddResource( resourcetype_t type, const char *name, int size, qbo
 
 void CL_CreateResourceList( void )
 {
-	char		szFileName[MAX_OSPATH];
+	char szFileName[MAX_OSPATH];
 	byte		rgucMD5_hash[16];
 	resource_t	*pNewResource;
 	int		nSize;
@@ -1204,30 +1219,36 @@ void CL_CreateResourceList( void )
 
 	HPAK_FlushHostQueue();
 	cl.num_resources = 0;
-
-	Q_snprintf( szFileName, sizeof( szFileName ), "logos/remapped.bmp" );
 	memset( rgucMD5_hash, 0, sizeof( rgucMD5_hash ));
 
+	// sanitize cvar value
+	if( Q_strcmp( cl_logoext.string, "bmp" ) &&
+		 Q_strcmp( cl_logoext.string, "png" ))
+		Cvar_DirectSet( &cl_logoext, "bmp" );
+
+	Q_snprintf( szFileName, sizeof( szFileName ),
+		"logos/remapped.%s", cl_logoext.string );
 	fp = FS_Open( szFileName, "rb", true );
 
-	if( fp )
+	if( !fp )
+		return;
+
+	MD5_HashFile( rgucMD5_hash, szFileName, NULL );
+	nSize = FS_FileLength( fp );
+
+	if( nSize != 0 )
 	{
-		MD5_HashFile( rgucMD5_hash, szFileName, NULL );
-		nSize = FS_FileLength( fp );
+		pNewResource = CL_AddResource( t_decal, szFileName, nSize, false, 0 );
 
-		if( nSize != 0 )
+		if( pNewResource )
 		{
-			pNewResource = CL_AddResource( t_decal, szFileName, nSize, false, 0 );
-
-			if( pNewResource )
-			{
-				SetBits( pNewResource->ucFlags, RES_CUSTOM );
-				memcpy( pNewResource->rgucMD5_hash, rgucMD5_hash, 16 );
-				HPAK_AddLump( false, CUSTOM_RES_PATH, pNewResource, NULL, fp );
-			}
+			SetBits( pNewResource->ucFlags, RES_CUSTOM );
+			memcpy( pNewResource->rgucMD5_hash, rgucMD5_hash, 16 );
+			HPAK_AddLump( false, CUSTOM_RES_PATH, pNewResource, NULL, fp );
 		}
-		FS_Close( fp );
 	}
+
+	FS_Close( fp );
 }
 
 /*
@@ -1290,7 +1311,7 @@ void CL_Rcon_f( void )
 	string command;
 	int	i;
 
-	if( !COM_CheckString( rcon_client_password->string ))
+	if( !COM_CheckString( rcon_password.string ))
 	{
 		Con_Printf( "You must set 'rcon_password' before issuing an rcon command.\n" );
 		return;
@@ -1305,7 +1326,7 @@ void CL_Rcon_f( void )
 	NET_Config( true, false );	// allow remote
 
 	Q_strcat( message, "rcon " );
-	Q_strcat( message, rcon_client_password->string );
+	Q_strcat( message, rcon_password.string );
 	Q_strcat( message, " " );
 
 	for( i = 1; i < Cmd_Argc(); i++ )
@@ -1571,11 +1592,38 @@ void CL_LocalServers_f( void )
 	// send a broadcast packet
 	adr.type = NA_BROADCAST;
 	adr.port = MSG_BigShort( PORT_SERVER );
+	Netchan_OutOfBandPrint( NS_CLIENT, adr, "info %i", PROTOCOL_VERSION );
 
+	adr.type = NA_MULTICAST_IP6;
 	Netchan_OutOfBandPrint( NS_CLIENT, adr, "info %i", PROTOCOL_VERSION );
 }
 
-#define MS_SCAN_REQUEST "1\xFF" "0.0.0.0:0\0"
+/*
+=================
+CL_BuildMasterServerScanRequest
+=================
+*/
+size_t CL_BuildMasterServerScanRequest( char *buf, size_t size, qboolean nat )
+{
+	size_t remaining;
+	char *info;
+
+	if( unlikely( size < sizeof( MS_SCAN_REQUEST )))
+		return 0;
+
+	Q_strncpy( buf, MS_SCAN_REQUEST, size );
+
+	info = buf + sizeof( MS_SCAN_REQUEST ) - 1;
+	remaining = size - sizeof( MS_SCAN_REQUEST );
+
+	info[0] = 0;
+
+	Info_SetValueForKey( info, "gamedir", GI->gamefolder, remaining );
+	Info_SetValueForKey( info, "clver", XASH_VERSION, remaining ); // let master know about client version
+	Info_SetValueForKey( info, "nat", nat ? "1" : "0", remaining );
+
+	return sizeof( MS_SCAN_REQUEST ) + Q_strlen( info );
+}
 
 /*
 =================
@@ -1584,18 +1632,17 @@ CL_InternetServers_f
 */
 void CL_InternetServers_f( void )
 {
-	char	fullquery[512] = MS_SCAN_REQUEST;
-	char *info = fullquery + sizeof( MS_SCAN_REQUEST ) - 1;
-	const size_t remaining = sizeof( fullquery ) - sizeof( MS_SCAN_REQUEST );
+	char	fullquery[512];
+	size_t len;
+	qboolean nat = cl_nat->value != 0.0f;
+
+	len = CL_BuildMasterServerScanRequest( fullquery, sizeof( fullquery ), nat );
+
+	Con_Printf( "Scanning for servers on the internet area...\n" );
 
 	NET_Config( true, true ); // allow remote
 
-	Con_Printf( "Scanning for servers on the internet area...\n" );
-	Info_SetValueForKey( info, "gamedir", GI->gamefolder, remaining );
-	Info_SetValueForKey( info, "clver", XASH_VERSION, remaining ); // let master know about client version
-	Info_SetValueForKey( info, "nat", cl_nat->string, remaining );
-
-	cls.internetservers_wait = NET_SendToMasters( NS_CLIENT, sizeof( MS_SCAN_REQUEST ) + Q_strlen( info ), fullquery );
+	cls.internetservers_wait = NET_SendToMasters( NS_CLIENT, len, fullquery );
 	cls.internetservers_pending = true;
 
 	if( !cls.internetservers_wait )
@@ -2424,11 +2471,18 @@ void CL_ProcessFile( qboolean successfully_received, const char *filename )
 	{
 		if( filename[0] != '!' )
 			Con_Printf( "processing %s\n", filename );
+
+		if( !Q_strnicmp( filename, "downloaded/", 11 ))
+		{
+			// skip "downloaded/" part to avoid mismatch with needed resources list
+			filename += 11; 
+		}
 	}
 	else if( !successfully_received )
 	{
 		Con_Printf( S_ERROR "server failed to transmit file '%s'\n", CL_CleanFileName( filename ));
 	}
+
 	if( cls.legacymode )
 	{
 		if( host.downloadcount > 0 )
@@ -2825,6 +2879,7 @@ void CL_InitLocal( void )
 	Cvar_RegisterVariable( &cl_download_ingame );
 	Cvar_RegisterVariable( &cl_logofile );
 	Cvar_RegisterVariable( &cl_logocolor );
+	Cvar_RegisterVariable( &cl_logoext );
 	Cvar_RegisterVariable( &cl_test_bandwidth );
 
 	Voice_RegisterCvars();
@@ -2839,7 +2894,6 @@ void CL_InitLocal( void )
 	cl_charset = Cvar_Get( "cl_charset", "utf-8", FCVAR_ARCHIVE, "1-byte charset to use (iconv style)" );
 	hud_utf8 = Cvar_Get( "hud_utf8", "0", FCVAR_ARCHIVE, "Use utf-8 encoding for hud text" );
 
-	rcon_client_password = Cvar_Get( "rcon_password", "", FCVAR_PRIVILEGED, "remote control client password" );
 	rcon_address = Cvar_Get( "rcon_address", "", FCVAR_PRIVILEGED, "remote control address" );
 
 	cl_trace_messages = Cvar_Get( "cl_trace_messages", "0", FCVAR_ARCHIVE|FCVAR_CHEAT, "enable message names tracing (good for developers)");
@@ -2863,9 +2917,9 @@ void CL_InitLocal( void )
 
 	cl_nosmooth = Cvar_Get( "cl_nosmooth", "0", FCVAR_ARCHIVE, "disable smooth up stair climbing" );
 	cl_nointerp = Cvar_Get( "cl_nointerp", "0", FCVAR_CLIENTDLL, "disable interpolation of entities and players" );
-	cl_smoothtime = Cvar_Get( "cl_smoothtime", "0", FCVAR_ARCHIVE, "time to smooth up" );
+	cl_smoothtime = Cvar_Get( "cl_smoothtime", "0.1", FCVAR_ARCHIVE, "time to smooth up" );
 	cl_cmdbackup = Cvar_Get( "cl_cmdbackup", "10", FCVAR_ARCHIVE, "how many additional history commands are sent" );
-	cl_cmdrate = Cvar_Get( "cl_cmdrate", "30", FCVAR_ARCHIVE, "Max number of command packets sent to server per second" );
+	cl_cmdrate = Cvar_Get( "cl_cmdrate", "60", FCVAR_ARCHIVE, "Max number of command packets sent to server per second" );
 	cl_draw_particles = Cvar_Get( "r_drawparticles", "1", FCVAR_CHEAT, "render particles" );
 	cl_draw_tracers = Cvar_Get( "r_drawtracers", "1", FCVAR_CHEAT, "render tracers" );
 	cl_draw_beams = Cvar_Get( "r_drawbeams", "1", FCVAR_CHEAT, "render beams" );
@@ -2894,6 +2948,12 @@ void CL_InitLocal( void )
 	Cmd_AddRestrictedCommand ("kill", NULL, "die instantly" );
 	Cmd_AddCommand ("god", NULL, "enable godmode" );
 	Cmd_AddCommand ("fov", NULL, "set client field of view" );
+
+	Cmd_AddRestrictedCommand ("ent_list", NULL, "list entities on server" );
+	Cmd_AddRestrictedCommand ("ent_fire", NULL, "fire entity command (be careful)" );
+	Cmd_AddRestrictedCommand ("ent_info", NULL, "dump entity information" );
+	Cmd_AddRestrictedCommand ("ent_create", NULL, "create entity with specified values (be careful)" );
+	Cmd_AddRestrictedCommand ("ent_getvars", NULL, "put parameters of specified entities to client's' ent_last_* cvars" );
 
 	// register our commands
 	Cmd_AddCommand ("pause", NULL, "pause the game (if the server allows pausing)" );
@@ -3051,9 +3111,6 @@ void Host_ClientFrame( void )
 	// catch changes video settings
 	VID_CheckChanges();
 
-	// process VGUI
-	VGui_RunFrame ();
-
 	// update the screen
 	SCR_UpdateScreen ();
 
@@ -3129,7 +3186,9 @@ void CL_Shutdown( void )
 	CL_UnloadProgs ();
 	cls.initialized = false;
 
-	VGui_Shutdown();
+	// for client-side VGUI support we use other order
+	if( !GI->internal_vgui_support )
+		VGui_Shutdown();
 
 	FS_Delete( "demoheader.tmp" ); // remove tmp file
 	SCR_FreeCinematic (); // release AVI's *after* client.dll because custom renderer may use them

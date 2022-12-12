@@ -3360,7 +3360,7 @@ void GAME_EXPORT NetAPI_SendRequest( int context, int request, int flags, double
 		return;
 	}
 
-	if( remote_address->type >= NA_IPX )
+	if( remote_address->type != NA_IPX && remote_address->type != NA_BROADCAST_IPX )
 		return; // IPX no longer support
 
 	// find a free request
@@ -3401,9 +3401,12 @@ void GAME_EXPORT NetAPI_SendRequest( int context, int request, int flags, double
 
 	if( request == NETAPI_REQUEST_SERVERLIST )
 	{
-		char	fullquery[512] = "1\xFF" "0.0.0.0:0\0" "\\gamedir\\";
+		char fullquery[512];
+		size_t len;
 
-		// make sure what port is specified
+		len = CL_BuildMasterServerScanRequest( fullquery, sizeof( fullquery ), false );
+
+		// make sure that port is specified
 		if( !nr->resp.remote_address.port )
 			nr->resp.remote_address.port = MSG_BigShort( PORT_MASTER );
 
@@ -3431,7 +3434,7 @@ void GAME_EXPORT NetAPI_CancelRequest( int context )
 {
 	net_request_t	*nr;
 	int		i;
-
+;
 	// find a specified request
 	for( i = 0; i < MAX_REQUESTS; i++ )
 	{
@@ -3909,6 +3912,9 @@ void CL_UnloadProgs( void )
 	if( Q_stricmp( GI->gamefolder, "hlfx" ) || GI->version != 0.5f )
 		clgame.dllFuncs.pfnShutdown();
 
+	if( GI->internal_vgui_support )
+		VGui_Shutdown();
+
 	Cvar_FullSet( "cl_background", "0", FCVAR_READ_ONLY );
 	Cvar_FullSet( "host_clientloaded", "0", FCVAR_READ_ONLY );
 
@@ -3937,10 +3943,6 @@ qboolean CL_LoadProgs( const char *name )
 	clgame.mempool = Mem_AllocPool( "Client Edicts Zone" );
 	clgame.entities = NULL;
 
-	// NOTE: important stuff!
-	// vgui must startup BEFORE loading client.dll to avoid get error ERROR_NOACESS
-	// during LoadLibrary
-	VGui_Startup( name, gameui.globals->scrWidth, gameui.globals->scrHeight );
 
 	// a1ba: we need to check if client.dll has direct dependency on SDL2
 	// and if so, disable relative mouse mode
@@ -3959,8 +3961,29 @@ qboolean CL_LoadProgs( const char *name )
 	clgame.client_dll_uses_sdl = true;
 #endif
 
+	// NOTE: important stuff!
+	// vgui must startup BEFORE loading client.dll to avoid get error ERROR_NOACESS
+	// during LoadLibrary
+	if( !GI->internal_vgui_support && VGui_LoadProgs( NULL ))
+	{
+		VGui_Startup( refState.width, refState.height );
+	}
+	else
+	{
+		// we failed to load vgui_support, but let's probe client.dll for support anyway
+		GI->internal_vgui_support = true;
+	}
+
 	clgame.hInstance = COM_LoadLibrary( name, false, false );
-	if( !clgame.hInstance ) return false;
+
+	if( !clgame.hInstance )
+		return false;
+
+	// delayed vgui initialization for internal support
+	if( GI->internal_vgui_support && VGui_LoadProgs( clgame.hInstance ))
+	{
+		VGui_Startup( refState.width, refState.height );
+	}
 
 	// clear exports
 	for( func = cdll_exports; func && func->name; func++ )
