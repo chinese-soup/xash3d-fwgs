@@ -1555,7 +1555,7 @@ int NET_SendLong( netsrc_t sock, int net_socket, const char *buf, size_t len, in
 					packet_number + 1, packet_count, size, net.sequence_number, NET_AdrToString( adr ));
 			}
 
-			ret = sendto( net_socket, packet, size + sizeof( SPLITPACKET ), flags, (const struct sockaddr *)to, tolen );
+			ret = sendto( net_socket, packet, size + sizeof( SPLITPACKET ), flags, (const struct sockaddr *)to, sizeof(struct sockaddr_in)  );
 			if( ret < 0 ) return ret; // error
 
 			if( ret >= size )
@@ -1571,7 +1571,7 @@ int NET_SendLong( netsrc_t sock, int net_socket, const char *buf, size_t len, in
 #endif
 	{
 		// no fragmenantion for client connection
-		return sendto( net_socket, buf, len, flags, (const struct sockaddr *)to, tolen );
+		return sendto( net_socket, buf, len, flags, (const struct sockaddr *)to, sizeof(struct sockaddr_in) );
 	}
 }
 
@@ -1626,7 +1626,7 @@ void NET_SendPacketEx( netsrc_t sock, size_t length, const void *data, netadr_t 
 
 		if( Host_IsDedicated( ))
 		{
-			Con_DPrintf( S_ERROR "NET_SendPacket: %s to %s\n", NET_ErrorString(), NET_AdrToString( to ));
+			Con_DPrintf( S_ERROR "NET_SendPacket dedicated: %s to %s\n", NET_ErrorString(), NET_AdrToString( to ));
 		}
 		else if( err == WSAEADDRNOTAVAIL || err == WSAENOBUFS )
 		{
@@ -1727,7 +1727,6 @@ static int NET_IPSocket( const char *net_iface, int port, int family )
 
 	if( family == AF_INET6 )
 		pfamily = PF_INET6;
-
 	if( NET_IsSocketError(( net_socket = socket( pfamily, SOCK_DGRAM, IPPROTO_UDP ))))
 	{
 		err = WSAGetLastError();
@@ -1783,7 +1782,7 @@ static int NET_IPSocket( const char *net_iface, int port, int family )
 		if( port == PORT_ANY ) ((struct sockaddr_in6 *)&addr)->sin6_port = 0;
 		else ((struct sockaddr_in6 *)&addr)->sin6_port = htons((short)port);
 
-		if( NET_IsSocketError( bind( net_socket, (struct sockaddr *)&addr, sizeof( addr ))))
+		if( NET_IsSocketError( bind( net_socket, (struct sockaddr *)&addr, sizeof(struct sockaddr_in))))
 		{
 			Con_DPrintf( S_WARN "NET_UDPSocket: port: %d bind6: %s\n", port, NET_ErrorString( ));
 			closesocket( net_socket );
@@ -1820,7 +1819,7 @@ static int NET_IPSocket( const char *net_iface, int port, int family )
 		if( port == PORT_ANY ) ((struct sockaddr_in *)&addr)->sin_port = 0;
 		else ((struct sockaddr_in *)&addr)->sin_port = htons((short)port);
 
-		if( NET_IsSocketError( bind( net_socket, (struct sockaddr *)&addr, sizeof( addr ))))
+		if( NET_IsSocketError( bind( net_socket, (struct sockaddr *)&addr, sizeof(struct sockaddr_in))))
 		{
 			Con_DPrintf( S_WARN "NET_UDPSocket: port: %d bind: %s\n", port, NET_ErrorString( ));
 			closesocket( net_socket );
